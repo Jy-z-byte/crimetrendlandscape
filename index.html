@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>London Crime Trends</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.9.0/mapbox-gl.js"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.9.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.8.5/dist/d3.min.js"></script>
+  <style>
+    body {
+      background-color: #1a1a2e;
+      color: #e0e0e0;
+    }
+    .container-fluid {
+      width: 100%;
+      padding: 0 15px;
+    }
+    .crime-container {
+      height: 100vh; /* 使用全视窗高度 */
+      display: flex;
+      flex-direction: column;
+    }
+    .map-chart-row {
+      flex-grow: 1;
+      display: flex;
+      min-height: 0; /* 允许内容压缩 */
+    }
+    .map-column, .chart-column {
+      position: relative;
+      padding: 15px;
+      height: 100%;
+    }
+    #map {
+      width: 100%;
+      height: 100%;
+      border-radius: 10px;
+      box-shadow: 0 4px 6px rgba(255,255,255,0.1);
+    }
+    #crime-chart-container {
+      width: 100%;
+      height: 100%;
+      background-color: #16213e;
+      border-radius: 10px;
+      box-shadow: 0 4px 6px rgba(255,255,255,0.1);
+      display: flex;
+      flex-direction: column;
+      padding: 15px;
+    }
+    #crime-chart {
+      flex-grow: 1;
+      width: 100%;
+      padding-bottom: 30px;
+    }
+    h1, h3 {
+      color: #f9d5e5;
+      margin-bottom: 15px;
+    }
+    .mapboxgl-popup {
+      max-width: 300px;
+      font: 12px/20px 'Helvetica Neue', Arial, Helvetica, sans-serif;
+    }
+    .mapboxgl-popup-content {
+      background: #2d2d3a;
+      color: #f9d5e5;
+      border-radius: 6px;
+      padding: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container-fluid crime-container">
+    <h1 class="text-center my-3">London Crime Trends by Borough</h1>
+    <div class="map-chart-row">
+      <div class="map-column" style="flex: 7;">
+        <div id="map"></div>
+      </div>
+      <div class="chart-column" style="flex: 5;">
+        <div id="crime-chart-container">
+          <h3 class="text-center">Crime Trend for <span id="borough-name">Select a Borough</span></h3>
+          <canvas id="crime-chart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Mapbox access token (replace with your own)
+    mapboxgl.accessToken = 'pk.eyJ1IjoiamluZ3lpOCIsImEiOiJjbTZyYmh1bTMwN3YyMmtuMDFpbGJ2NXIzIn0.msR21mXy-ZgMGXktqQYErQ';
+    
+    // Global variables to store map and chart
+    let map, crimeChart;
+
+    // Custom color palette
+    const colorPalette = {
+      darkBackground: '#1a1a2e',
+      lightPink: '#f9d5e5',
+      mediumPurple: '#845ec2',
+      deepBlue: '#2d2d3a',
+      softOrange: '#ff6f61'
+    };
+
+    // Load GeoJSON and setup map
+    fetch('crime_boroughs.geojson')
+      .then(response => response.json())
+      .then(data => {
+        // Calculate Violence Against Person for 2022 for each borough
+        data.features.forEach(feature => {
+          feature.properties.violenceCount = feature.properties['X2022_VIOLENCE_AGAINST_THE_PERSON'] || 0;
+        });
+
+        // Create color scale based on 2022 Violence Against Person
+        const violenceCounts = data.features.map(f => f.properties.violenceCount);
+        const colorScale = d3.scaleSequential(d3.interpolatePurples)
+          .domain([Math.min(...violenceCounts), Math.max(...violenceCounts)]);
+
+        // Initialize map with dark style
+        map = new mapboxgl.Map({
+          container: 'map',
+          style: 'mapbox://styles/mapbox/dark-v11',
+          center: [-0.09, 51.505],
+          zoom: 8.8
+        });
+
+        map.on('load', function () {
+          // Add GeoJSON source
+          map.addSource('boroughs', {
+            type: 'geojson',
+            data: data
+          });
+
+          // Add borough boundaries layer
+          map.addLayer({
+            'id': 'borough-boundaries',
+            'type': 'fill',
+            'source': 'boroughs',
+            'paint': {
+              'fill-color': [
+                'interpolate',
+                ['linear'],
+                ['get', 'violenceCount'],
+                Math.min(...violenceCounts), colorPalette.lightPink,
+                Math.max(...violenceCounts), colorPalette.mediumPurple
+              ],
+              'fill-opacity': 0.7,
+              'fill-outline-color': colorPalette.softOrange
+            }
+          });
+
+          // Add borough labels
+          map.addLayer({
+            'id': 'borough-labels',
+            'type': 'symbol',
+            'source': 'boroughs',
+            'layout': {
+              'text-field': ['get', 'boroughname'],
+              'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+              'text-size': 12,
+              'text-transform': 'uppercase',
+              'text-letter-spacing': 0.1
+            },
+            'paint': {
+              'text-color': colorPalette.lightPink,
+              'text-halo-color': colorPalette.deepBlue,
+              'text-halo-width': 1
+            }
+          });
+
+          // Add legend to map
+          const legendContainer = document.createElement('div');
+          legendContainer.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
+          legendContainer.style.backgroundColor = colorPalette.deepBlue;
+          legendContainer.style.color = colorPalette.lightPink;
+          legendContainer.style.padding = '10px';
+          legendContainer.style.borderRadius = '4px';
+
+          const legendTitle = document.createElement('div');
+          legendTitle.textContent = 'Occurrence of Crime';
+          legendTitle.style.marginBottom = '5px';
+          legendTitle.style.fontWeight = 'bold';
+          legendContainer.appendChild(legendTitle);
+
+          // 创建低到高的文字描述
+          const lowHighContainer = document.createElement('div');
+          lowHighContainer.style.display = 'flex';
+          lowHighContainer.style.justifyContent = 'space-between';
+          lowHighContainer.style.marginTop = '5px';
+
+          const lowLabel = document.createElement('span');
+          lowLabel.textContent = 'Low';
+          lowLabel.style.fontSize = '10px';
+
+          const highLabel = document.createElement('span');
+          highLabel.textContent = 'High';
+          highLabel.style.fontSize = '10px';
+
+          // 创建颜色渐变条
+          const gradientBar = document.createElement('div');
+          gradientBar.style.width = '100%';
+          gradientBar.style.height = '10px';
+          gradientBar.style.background = `linear-gradient(to right, ${colorPalette.lightPink}, ${colorPalette.mediumPurple})`;
+          gradientBar.style.marginBottom = '5px';
+
+          lowHighContainer.appendChild(lowLabel);
+          lowHighContainer.appendChild(highLabel);
+
+          legendContainer.appendChild(gradientBar);
+          legendContainer.appendChild(lowHighContainer);
+
+          // Create a custom control for the legend
+          const LegendControl = function() {};
+          LegendControl.prototype.onAdd = function(map) {
+            return legendContainer;
+          };
+          LegendControl.prototype.onRemove = function() {
+            legendContainer.parentNode.removeChild(legendContainer);
+          };
+
+          // Add legend control to map
+          map.addControl(new LegendControl(), 'top-right');
+
+          // Click event for boroughs
+          map.on('click', 'borough-boundaries', function (e) {
+            const boroughName = e.features[0].properties.boroughname;
+            const violenceCount = e.features[0].properties.violenceCount;
+
+            // Create popup
+            new mapboxgl.Popup()
+              .setLngLat(e.lngLat)
+              .setHTML(`
+                <strong>${boroughName}</strong><br>
+                Violence Against Person (2022): ${violenceCount}
+              `)
+              .addTo(map);
+
+            showCrimeTrends(boroughName, data);
+          });
+
+          // Hover effects
+          map.on('mouseenter', 'borough-boundaries', function () {
+            map.getCanvas().style.cursor = 'pointer';
+          });
+          map.on('mouseleave', 'borough-boundaries', function () {
+            map.getCanvas().style.cursor = '';
+          });
+        });
+      })
+      .catch(error => console.error('Error loading GeoJSON data:', error));
+
+    
+    function showCrimeTrends(borough, data) {
+      // 更新borough名称
+      document.getElementById('borough-name').innerText = borough;
+
+      // 查找该Borough的数据
+      const boroughData = data.features.find(feature => feature.properties.boroughname === borough);
+      if (!boroughData) {
+        console.error('No data found for borough:', borough);
+        return;
+      }
+
+      // 犯罪类型定义
+      const crimeTypes = [
+        { 
+          key: 'ARSON_AND_CRIMINAL_DAMAGE', 
+          label: 'Arson & Criminal Damage', 
+          color: colorPalette.lightPink 
+        },
+        { 
+          key: 'BURGLARY', 
+          label: 'Burglary', 
+          color: colorPalette.mediumPurple
+        },
+        { 
+          key: 'DRUG_OFFENCES', 
+          label: 'Drug Offences', 
+          color: '#4B0082' // 靛蓝色
+        },
+        { 
+          key: 'ROBBERY', 
+          label: 'Robbery', 
+          color: '#fe8595'
+        },
+        { 
+          key: 'VIOLENCE_AGAINST_THE_PERSON', 
+          label: 'Violence Against the Person', 
+          color: '#a0affe' // 暗绿松石色
+        }
+      ];
+
+      // 生成数据集
+      const datasets = crimeTypes.map(crimeType => ({
+        label: crimeType.label,
+        data: Array.from({length: 12}, (_, i) => {
+          const year = 2011 + i;
+          return boroughData.properties[`X${year}_${crimeType.key}`] || 0;
+        }),
+        borderColor: crimeType.color,
+        backgroundColor: crimeType.color + '33', // 添加轻微的透明度
+        fill: true
+      }));
+
+      // 生成年份标签
+      const yearsLabels = Array.from({length: 12}, (_, i) => 2011 + i);
+
+      // 销毁现有图表（如果存在）
+      if (crimeChart) {
+        crimeChart.destroy();
+      }
+
+      // 创建新图表
+      const ctx = document.getElementById('crime-chart').getContext('2d');
+      crimeChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: yearsLabels,
+          datasets: datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: {
+              display: true,
+              text: `Crime Trends in ${borough} (2011-2022)`,
+              color: colorPalette.lightPink
+            },
+            legend: {
+              labels: {
+                color: colorPalette.lightPink
+              }
+            }
+          },
+          scales: {
+            x: {
+              title: {
+                display: true,
+                text: 'Year',
+                color: colorPalette.lightPink
+              },
+              ticks: {
+                color: colorPalette.lightPink
+              }
+            },
+            y: {
+              title: {
+                display: true,
+                text: 'Crime Count',
+                color: colorPalette.lightPink
+              },
+              beginAtZero: true,
+              ticks: {
+                color: colorPalette.lightPink
+              }
+            }
+          }
+        }
+      });
+    }
+  </script>
+
+  <!-- Bootstrap JavaScript -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
